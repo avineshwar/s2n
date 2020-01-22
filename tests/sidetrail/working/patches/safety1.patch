@@ -1,13 +1,7 @@
---- ../../../../../utils/s2n_safety.h
-+++ s2n_safety.h
-@@ -15,24 +15,26 @@
- 
- #pragma once
- 
--#include <string.h>
-+//#include <string.h>
- #include <sys/types.h>
- #include <stdint.h>
+--- ../../../../../utils/s2n_safety.h	2019-11-15 14:47:04.000000000 -0500
++++ s2n_safety.h	2019-11-15 14:57:20.000000000 -0500
+@@ -22,19 +22,22 @@
+ #include <stdlib.h>
  
  #include "error/s2n_errno.h"
 +#include "s2n_annotations.h"
@@ -17,10 +11,14 @@
 +void *memcpy(void *str1, const void *str2, size_t n);
  
  /* NULL check a pointer */
- #define notnull_check( ptr )           do { if ( (ptr) == NULL ) { S2N_ERROR(S2N_ERR_NULL); } } while(0)
- #define notnull_check_ptr( ptr )       do { if ( (ptr) == NULL ) { S2N_ERROR_PTR(S2N_ERR_NULL); } } while(0)
-+#define MEMCOPY_COST 2
+-#define notnull_check( ptr )           do { if ( (ptr) == NULL ) { S2N_ERROR(S2N_ERR_NULL); } } while(0)
+-#define notnull_check_ptr( ptr )       do { if ( (ptr) == NULL ) { S2N_ERROR_PTR(S2N_ERR_NULL); } } while(0)
++#define notnull_check( ptr )           __VERIFIER_assume(ptr != NULL)
++#define notnull_check_ptr( ptr )       __VERIFIER_assume(ptr != NULL)
 +
++
++#define MEMCOPY_COST 2
++void * my_memset ( void * ptr, int value, size_t num );
  
  static inline void* trace_memcpy_check(void *restrict to, const void *restrict from, size_t size, const char *debug_str)
  {
@@ -30,11 +28,10 @@
 -        return NULL;
 -    }
 -
-+    __VERIFIER_ASSUME_LEAKAGE(size * MEMCOPY_COST);
      return memcpy(to, from, size);
  }
  
-@@ -40,32 +42,26 @@ static inline void* trace_memcpy_check(void *restrict to, const void *restrict f
+@@ -42,20 +45,12 @@
   */
  #define memcpy_check( d, s, n )                                             \
    do {                                                                      \
@@ -43,23 +40,31 @@
 -      void *r = trace_memcpy_check( (d), (s) , (__tmp_n), _S2N_DEBUG_LINE); \
 -      if (r == NULL) { return -1; }                                         \
 -    }                                                                       \
-+    memcpy(d,s,n);							\
++    memcpy((d), (s), (n));						\
    } while(0)
  
--#define memset_check( d, c, n )                                             \
-+#define memset_check( d, c, n )						\
+ #define memcpy_check_ptr( d, s, n )                                         \
    do {                                                                      \
-     __typeof( n ) __tmp_n = ( n );                                          \
+-    __typeof( n ) __tmp_n = ( n );                                          \
+-    if ( __tmp_n ) {                                                        \
+-      void *r = trace_memcpy_check( (d), (s) , (__tmp_n), _S2N_DEBUG_LINE); \
+-      if (r == NULL) { return NULL; }                                       \
+-    }                                                                       \
++    memcpy((d), (s), (n));						\
+   } while(0)
+ 
+ #define memset_check( d, c, n )                                             \
+@@ -64,19 +59,19 @@
      if ( __tmp_n ) {                                                        \
        __typeof( d ) __tmp_d = ( d );                                        \
        notnull_check( __tmp_d );                                             \
 -      memset( __tmp_d, (c), __tmp_n);                                       \
-+      my_memset( __tmp_d, (c), __tmp_n);                                    \
++      my_memset( __tmp_d, (c), __tmp_n);                                       \
      }                                                                       \
    } while(0)
  
--#define char_to_digit(c, d)  do { if(!isdigit(c)) { S2N_ERROR(S2N_ERR_SAFETY); } d = c - '0'; } while(0)
--
+ #define char_to_digit(c, d)  do { if(!isdigit(c)) { S2N_ERROR(S2N_ERR_SAFETY); } d = c - '0'; } while(0)
+ 
  /* Range check a number */
 -#define gte_check(n, min)  do { if ( (n) < min ) { S2N_ERROR(S2N_ERR_SAFETY); } } while(0)
 -#define lte_check(n, max)  do { if ( (n) > max ) { S2N_ERROR(S2N_ERR_SAFETY); } } while(0)
@@ -76,23 +81,28 @@
  #define inclusive_range_check( low, n, high )   \
    do  {                                         \
      __typeof( n ) __tmp_n = ( n );              \
-@@ -79,17 +75,12 @@ static inline void* trace_memcpy_check(void *restrict to, const void *restrict f
+@@ -90,9 +85,9 @@
      lt_check(__tmp_n, high);                    \
    } while (0)
  
--#define GUARD( x )              if ( (x) < 0 ) return -1
--#define GUARD_GOTO( x , label ) if ( (x) < 0 ) goto label
--#define GUARD_PTR( x )          if ( (x) < 0 ) return NULL
-+#define GUARD( x )              __VERIFIER_assume( (x) >= 0 )
-+#define GUARD_GOTO( x , label ) __VERIFIER_assume( (x) >= 0 )
-+#define GUARD_PTR( x )          __VERIFIER_assume( (x) >= 0 )
+-#define GUARD( x )              do {if ( (x) < 0 ) return S2N_FAILURE;} while (0)
+-#define GUARD_GOTO( x , label ) do {if ( (x) < 0 ) goto label;} while (0)
+-#define GUARD_PTR( x )          do {if ( (x) < 0 ) return NULL;} while (0)
++#define GUARD( x )              __VERIFIER_assume((x) == 0)
++#define GUARD_GOTO( x , label ) __VERIFIER_assume((x) == 0)
++#define GUARD_PTR( x )          __VERIFIER_assume((x) == 0)
+ 
+ /* Check the return value from caller. If this value is -2, S2N_ERR_BLOCKED is marked*/
+ #define GUARD_AGAIN( x )  do {if ( (x) == -2 ) { S2N_ERROR(S2N_ERR_BLOCKED); } GUARD( x );} while(0)
+@@ -107,12 +102,7 @@
+ #define S2N_IN_TEST ( s2n_in_unit_test() || S2N_IN_INTEG_TEST )
  
  /* TODO: use the OSSL error code in error reporting https://github.com/awslabs/s2n/issues/705 */
--#define GUARD_OSSL( x , errcode )			\
--  do {							\
--  if (( x ) != 1) {					\
--    S2N_ERROR( errcode );				\
--  }							\
+-#define GUARD_OSSL( x , errcode )               \
+-  do {                                          \
+-  if (( x ) != 1) {                             \
+-    S2N_ERROR( errcode );                       \
+-  }                                             \
 -  } while (0)
 +#define GUARD_OSSL( x , errcode ) __VERIFIER_assume( (x) == 1 )
  

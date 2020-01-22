@@ -13,6 +13,8 @@
  * permissions and limitations under the License.
  */
 
+#include <sys/param.h>
+
 #include "crypto/s2n_sequence.h"
 #include "crypto/s2n_cipher.h"
 #include "crypto/s2n_hmac.h"
@@ -71,13 +73,15 @@ int s2n_record_header_parse(
     const uint8_t version = (protocol_version[0] * 10) + protocol_version[1];
     /* https://tools.ietf.org/html/rfc5246#appendix-E.1 states that servers must accept any value {03,XX} as the record
      * layer version number for the first TLS record. There is some ambiguity here because the client does not know
-     * what version to use in the record header prior to receiving the ServerHello. Some client implmentations may use
+     * what version to use in the record header prior to receiving the ServerHello. Some client implementations may use
      * a garbage value(not {03,XX}) in the ClientHello.
      * Choose to be lenient to these clients. After protocol negotiation, we will enforce that all record versions
      * match the negotiated version.
      */
 
-    S2N_ERROR_IF(conn->actual_protocol_version_established && conn->actual_protocol_version != version, S2N_ERR_BAD_MESSAGE);
+    S2N_ERROR_IF(conn->actual_protocol_version_established &&
+        MIN(conn->actual_protocol_version, S2N_TLS12) /* check against legacy record version (1.2) in tls 1.3 */
+        != version, S2N_ERR_BAD_MESSAGE);
     GUARD(s2n_stuffer_read_uint16(in, fragment_length));
 
     /* Some servers send fragments that are above the maximum length.  (e.g.
@@ -91,6 +95,18 @@ int s2n_record_header_parse(
 
 int s2n_record_parse(struct s2n_connection *conn)
 {
+    uint8_t content_type;
+    uint16_t encrypted_length;
+    GUARD(s2n_record_header_parse(conn, &content_type, &encrypted_length));
+
+    /* In TLS 1.3, handle CCS message as unprotected records */
+    struct s2n_crypto_parameters *current_client_crypto = conn->client;
+    struct s2n_crypto_parameters *current_server_crypto = conn->server;
+    if (conn->actual_protocol_version == S2N_TLS13 && content_type == TLS_CHANGE_CIPHER_SPEC) {
+        conn->client = &conn->initial;
+        conn->server = &conn->initial;
+    }
+
     const struct s2n_cipher_suite *cipher_suite = conn->client->cipher_suite;
     uint8_t *implicit_iv = conn->client->client_implicit_iv;
     struct s2n_hmac_state *mac = &conn->client->client_record_mac;
@@ -105,9 +121,10 @@ int s2n_record_parse(struct s2n_connection *conn)
         session_key = &conn->server->server_key;
     }
 
-    uint8_t content_type;
-    uint16_t encrypted_length;
-    GUARD(s2n_record_header_parse(conn, &content_type, &encrypted_length));
+    if (conn->actual_protocol_version == S2N_TLS13 && content_type == TLS_CHANGE_CIPHER_SPEC) {
+        conn->client = current_client_crypto;
+        conn->server = current_server_crypto;
+    }
 
     switch (cipher_suite->record_alg->cipher->type) {
     case S2N_AEAD:
@@ -129,3 +146,20 @@ int s2n_record_parse(struct s2n_connection *conn)
 
     return 0;
 }
+
+int s2n_parse_record_type(struct s2n_stuffer *stuffer, uint8_t * record_type) 
+{
+    GUARD(s2n_stuffer_skip_read(stuffer, s2n_stuffer_data_available(stuffer) - 1));
+
+    /* set the true record type */
+    GUARD(s2n_stuffer_read_uint8(stuffer, record_type));
+
+    /* wipe this last byte so the rest handshake works like < TLS 1.3 */
+    GUARD(s2n_stuffer_wipe_n(stuffer, 1));
+
+    /* set the read cursor at where it should be */
+    GUARD(s2n_stuffer_reread(stuffer));
+
+    return 0;
+}
+

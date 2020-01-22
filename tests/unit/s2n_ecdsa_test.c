@@ -25,8 +25,11 @@
 #include "tls/s2n_config.h"
 
 #include "crypto/s2n_ecdsa.h"
-#include "crypto/s2n_ecc.h"
+#include "crypto/s2n_ecc_evp.h"
 #include "crypto/s2n_fips.h"
+
+#include "utils/s2n_safety.h"
+
 
 static uint8_t unmatched_private_key[] =
     "-----BEGIN EC PRIVATE KEY-----\n"
@@ -95,11 +98,11 @@ int main(int argc, char **argv)
     struct s2n_pkey pub_key;
     struct s2n_pkey priv_key;
     struct s2n_pkey unmatched_priv_key;
-    s2n_cert_type cert_type;
+    s2n_pkey_type pkey_type;
 
     b.size = s2n_stuffer_data_available(&certificate_out);
     b.data = s2n_stuffer_raw_read(&certificate_out, b.size);
-    EXPECT_SUCCESS(s2n_asn1der_to_public_key_and_type(&pub_key, &cert_type, &b));
+    EXPECT_SUCCESS(s2n_asn1der_to_public_key_and_type(&pub_key, &pkey_type, &b));
 
     b.size = s2n_stuffer_data_available(&ecdsa_key_out);
     b.data = s2n_stuffer_raw_read(&ecdsa_key_out, b.size);
@@ -123,7 +126,7 @@ int main(int argc, char **argv)
     EXPECT_SUCCESS(s2n_hash_new(&hash_one));
     EXPECT_SUCCESS(s2n_hash_new(&hash_two));
 
-    for (int i = 0; i < sizeof(supported_hash_algorithms) / sizeof(supported_hash_algorithms[0]); i++) {
+    for (int i = 0; i < s2n_array_len(supported_hash_algorithms); i++) {
         int hash_alg = supported_hash_algorithms[i];
         
         if (!s2n_hash_is_available(hash_alg)) {

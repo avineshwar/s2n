@@ -35,6 +35,7 @@ extern int s2n_stuffer_write_uint64_hex(struct s2n_stuffer *stuffer, uint64_t u)
 extern int s2n_stuffer_alloc_ro_from_hex_string(struct s2n_stuffer *stuffer, const char *str);
 
 void s2n_print_connection(struct s2n_connection *conn, const char *marker);
+int s2n_connection_set_io_stuffers(struct s2n_stuffer *input, struct s2n_stuffer *output, struct s2n_connection *conn);
 
 #define S2N_MAX_TEST_PEM_SIZE 4096
 
@@ -52,10 +53,17 @@ void s2n_print_connection(struct s2n_connection *conn, const char *marker);
 #define S2N_RSA_2048_PKCS1_KEY          "../pems/rsa_2048_pkcs1_key.pem"
 #define S2N_RSA_2048_PKCS8_KEY          "../pems/rsa_2048_pkcs8_key.pem"
 
+#define S2N_RSA_PSS_2048_SHA256_CA_KEY         "../pems/rsa_pss_2048_sha256_CA_key.pem"
+#define S2N_RSA_PSS_2048_SHA256_CA_CERT        "../pems/rsa_pss_2048_sha256_CA_cert.pem"
+#define S2N_RSA_PSS_2048_SHA256_LEAF_KEY       "../pems/rsa_pss_2048_sha256_leaf_key.pem"
+#define S2N_RSA_PSS_2048_SHA256_LEAF_CERT      "../pems/rsa_pss_2048_sha256_leaf_cert.pem"
+
 #define S2N_RSA_2048_SHA256_CLIENT_CERT "../pems/rsa_2048_sha256_client_cert.pem"
 
 #define S2N_RSA_2048_SHA256_NO_DNS_SANS_CERT "../pems/rsa_2048_sha256_no_dns_sans_cert.pem"
 #define S2N_RSA_2048_SHA256_WILDCARD_CERT    "../pems/rsa_2048_sha256_wildcard_cert.pem"
+
+#define S2N_RSA_2048_SHA256_URI_SANS_CERT "../pems/rsa_2048_sha256_uri_sans_cert.pem"
 
 /* "Strangely" formatted PEMs that should still parse successfully */
 #define S2N_LEAF_WHITESPACE_CERT_CHAIN         "../pems/rsa_2048_leaf_whitespace_cert.pem"
@@ -79,12 +87,16 @@ void s2n_print_connection(struct s2n_connection *conn, const char *marker);
 #define S2N_NO_DASHES_CERT_CHAIN        "../pems/rsa_2048_no_dashes_cert.pem"
 
 /* OCSP Stapled Response Testing files */
-#define S2N_OCSP_SERVER_CERT            "../pems/ocsp/server_cert.pem"
-#define S2N_OCSP_SERVER_KEY             "../pems/ocsp/server_key.pem"
-#define S2N_OCSP_CA_CERT                "../pems/ocsp/ca_cert.pem"
-#define S2N_OCSP_CA_KEY                 "../pems/ocsp/ca_key.pem"
-#define S2N_OCSP_RESPONSE_DER           "../pems/ocsp/ocsp_response.der"
-#define S2N_OCSP_RESPONSE_CERT           "../pems/ocsp/ocsp_cert.pem"
+#define S2N_OCSP_SERVER_CERT                   "../pems/ocsp/server_cert.pem"
+#define S2N_OCSP_SERVER_KEY                    "../pems/ocsp/server_key.pem"
+#define S2N_OCSP_CA_CERT                       "../pems/ocsp/ca_cert.pem"
+#define S2N_OCSP_CA_KEY                        "../pems/ocsp/ca_key.pem"
+#define S2N_OCSP_RESPONSE_DER                  "../pems/ocsp/ocsp_response.der"
+#define S2N_OCSP_RESPONSE_NO_NEXT_UPDATE_DER   "../pems/ocsp/ocsp_response_no_next_update.der"
+#define S2N_OCSP_RESPONSE_CERT                 "../pems/ocsp/ocsp_cert.pem"
+
+#define S2N_ALLIGATOR_SAN_CERT                 "../pems/sni/alligator_cert.pem"
+#define S2N_ALLIGATOR_SAN_KEY                  "../pems/sni/alligator_key.pem"
 
 #define S2N_DHPARAMS_2048 "../pems/dhparams_2048.pem"
 
@@ -98,3 +110,28 @@ int s2n_read_test_pem(const char *pem_path, char *pem_out, long int max_size);
 
 int s2n_negotiate_test_server_and_client(struct s2n_connection *server_conn, struct s2n_connection *client_conn);
 int s2n_shutdown_test_server_and_client(struct s2n_connection *server_conn, struct s2n_connection *client_conn);
+
+int s2n_test_kem_with_kat(const struct s2n_kem *kem, const char *kat_file);
+int s2n_test_hybrid_ecdhe_kem_with_kat(const struct s2n_kem *kem, struct s2n_cipher_suite *cipher_suite,
+        const char * kat_file_name, uint32_t server_key_message_length, uint32_t client_key_message_length);
+
+/* Expects 2 s2n_blobs to be equal (same size and contents) */
+#define S2N_BLOB_EXPECT_EQUAL( blob1, blob2 ) do {              \
+    EXPECT_EQUAL(blob1.size, blob2.size);                       \
+    EXPECT_BYTEARRAY_EQUAL(blob1.data, blob2.data, blob1.size); \
+} while (0)
+
+/* Expects data of type in stuffer, where type is uint32, uint64 etc.. */
+#define S2N_STUFFER_READ_EXPECT_EQUAL( stuffer, expected, type ) do { \
+    type##_t value;                                                   \
+    EXPECT_SUCCESS(s2n_stuffer_read_##type(stuffer, &value));         \
+    EXPECT_EQUAL(value, expected);                                    \
+} while (0)
+
+/* Expects written length in stuffer */
+#define S2N_STUFFER_LENGTH_WRITTEN_EXPECT_EQUAL( stuffer, bytes ) do { \
+    EXPECT_SUCCESS(s2n_stuffer_skip_read(stuffer, bytes));      \
+    EXPECT_EQUAL(s2n_stuffer_data_available(stuffer), 0);       \
+} while (0)
+
+int s2n_public_ecc_keys_are_equal(struct s2n_ecc_evp_params *params_1, struct s2n_ecc_evp_params *params_2);

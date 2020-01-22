@@ -82,8 +82,11 @@ static inline int s2n_defend_if_forked(void)
     struct s2n_blob private = {.data = s2n_private_drbg,.size = sizeof(s2n_private_drbg) };
 
     if (zero_if_forked == 0) {
-        GUARD(s2n_drbg_instantiate(&per_thread_public_drbg, &public));
-        GUARD(s2n_drbg_instantiate(&per_thread_private_drbg, &private));
+        /* Clean up the old drbg first */
+        GUARD(s2n_rand_cleanup_thread());
+        /* Instantiate the new ones */
+        GUARD(s2n_drbg_instantiate(&per_thread_public_drbg, &public, S2N_AES_128_CTR_NO_DF_PR));
+        GUARD(s2n_drbg_instantiate(&per_thread_private_drbg, &private, S2N_AES_128_CTR_NO_DF_PR));
         zero_if_forked = 1;
     }
 
@@ -163,11 +166,14 @@ int s2n_get_urandom_data(struct s2n_blob *blob)
     return 0;
 }
 
-int64_t s2n_public_random(int64_t max)
+/*
+ * Return a random number in the range [0, bound)
+ */
+int64_t s2n_public_random(int64_t bound)
 {
     uint64_t r;
 
-    gt_check(max, 0);
+    gt_check(bound, 0);
 
     while (1) {
         struct s2n_blob blob = {.data = (void *)&r, sizeof(r) };
@@ -181,18 +187,18 @@ int64_t s2n_public_random(int64_t max)
          * r == 257 is out of range.
          *
          * To de-bias the dice, we discard values of r that are higher
-         * that the highest multiple of 'max' an int can support. If
-         * max is a uint, then in the worst case we discard 50% - 1 r's.
-         * But since 'max' is an int and INT_MAX is <= UINT_MAX / 2,
+         * that the highest multiple of 'bound' an int can support. If
+         * bound is a uint, then in the worst case we discard 50% - 1 r's.
+         * But since 'bound' is an int and INT_MAX is <= UINT_MAX / 2,
          * in the worst case we discard 25% - 1 r's.
          */
-        if (r < (UINT64_MAX - (UINT64_MAX % max))) {
-            return r % max;
+        if (r < (UINT64_MAX - (UINT64_MAX % bound))) {
+            return r % bound;
         }
     }
 }
 
-#if !defined(OPENSSL_IS_BORINGSSL) && !defined(OPENSSL_FIPS) && !defined(LIBRESSL_VERSION_NUMBER)
+#if S2N_LIBCRYPTO_SUPPORTS_CUSTOM_RAND
 
 int s2n_openssl_compat_rand(unsigned char *buf, int num)
 {
@@ -246,7 +252,7 @@ int s2n_rand_init(void)
 
     GUARD(s2n_defend_if_forked());
 
-#if !defined(OPENSSL_IS_BORINGSSL) && !defined(OPENSSL_FIPS) && !defined(LIBRESSL_VERSION_NUMBER)
+#if S2N_LIBCRYPTO_SUPPORTS_CUSTOM_RAND
     /* Create an engine */
     ENGINE *e = ENGINE_new();
     if (e == NULL ||
@@ -272,7 +278,7 @@ int s2n_rand_cleanup(void)
     GUARD(close(entropy_fd));
     entropy_fd = -1;
 
-#if !defined(OPENSSL_IS_BORINGSSL) && !defined(OPENSSL_FIPS) && !defined(LIBRESSL_VERSION_NUMBER)
+#if S2N_LIBCRYPTO_SUPPORTS_CUSTOM_RAND
     /* Cleanup our rand ENGINE in libcrypto */
     ENGINE *rand_engine = ENGINE_by_id("s2n_rand");
     if (rand_engine) {
@@ -292,6 +298,20 @@ int s2n_rand_cleanup_thread(void)
 
     return 0;
 }
+
+/*
+ * This must only be used for unit tests. Any real use is dangerous and will be overwritten in s2n_defend_if_forked if
+ * it is forked. This was added to support known answer tests that use OpenSSL and s2n_get_private_random_data directly.
+ */
+int s2n_set_private_drbg_for_test(struct s2n_drbg drbg)
+{
+    S2N_ERROR_IF(!s2n_in_unit_test(), S2N_ERR_NOT_IN_UNIT_TEST);
+    GUARD(s2n_drbg_wipe(&per_thread_private_drbg));
+
+    per_thread_private_drbg = drbg;
+    return 0;
+}
+
 
 int s2n_cpu_supports_rdrand()
 {
@@ -317,7 +337,7 @@ int s2n_get_rdrand_data(struct s2n_blob *out)
 
 #if defined(__x86_64__) || defined(__i386__)
     int space_remaining = 0;
-    struct s2n_stuffer stuffer = {{0}};
+    struct s2n_stuffer stuffer = {0};
     union {
         uint64_t u64;
 #if defined(__i386__)
@@ -353,7 +373,7 @@ int s2n_get_rdrand_data(struct s2n_blob *out)
             __asm__ __volatile__(".byte 0x0f, 0xc7, 0xf0;\n" "setc %b1;\n": "=a"(output.i386_fields.u_high), "=qm"(success_high)
                                  :
                                  :"cc");
-
+            /* cppcheck-suppress knownConditionTrueFalse */
             success = success_high & success_low;
 #else
             /* execute the rdrand instruction, store the result in a general purpose register (it's assigned to
@@ -374,9 +394,7 @@ int s2n_get_rdrand_data(struct s2n_blob *out)
             }
         }
 
-        if (!success) {
-            return -1;
-        }
+        S2N_ERROR_IF(!success, S2N_ERR_RDRAND_FAILED);
 
         int data_to_fill = MIN(sizeof(output), space_remaining);
 
@@ -385,6 +403,6 @@ int s2n_get_rdrand_data(struct s2n_blob *out)
 
     return 0;
 #else
-    return -1;
+    S2N_ERROR(S2N_ERR_UNSUPPORTED_CPU);
 #endif
 }

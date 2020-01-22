@@ -24,6 +24,8 @@
 
 #include <s2n.h>
 
+
+#include "utils/s2n_safety.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_handshake.h"
 
@@ -87,6 +89,7 @@ int mock_client(int writefd, int readfd, const char **protocols, int count, cons
         s2n_send(client_conn, buffer, i, &blocked);
     }
 
+    /* cppcheck-suppress unreadVariable */
     int shutdown_rc= -1;
     if(!result) {
         do {
@@ -118,14 +121,14 @@ int main(int argc, char **argv)
     char *cert_chain_pem;
     char *private_key_pem;
     char *dhparams_pem;
+    struct s2n_cert_chain_and_key *chain_and_key;
 
     const char *protocols[] = { "http/1.1", "spdy/3.1", "h2" };
-    const int protocols_size = sizeof(protocols) / sizeof(protocols[0]);
+    const int protocols_size = s2n_array_len(protocols);
     const char *mismatch_protocols[] = { "spdy/2" };
 
     BEGIN_TEST();
 
-    EXPECT_SUCCESS(setenv("S2N_ENABLE_CLIENT_MODE", "1", 0));
     EXPECT_NOT_NULL(cert_chain_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
     EXPECT_NOT_NULL(private_key_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
     EXPECT_NOT_NULL(dhparams_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
@@ -134,9 +137,11 @@ int main(int argc, char **argv)
     EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_CERT_CHAIN, cert_chain_pem, S2N_MAX_TEST_PEM_SIZE));
     EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_PRIVATE_KEY, private_key_pem, S2N_MAX_TEST_PEM_SIZE));
     EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_DHPARAMS, dhparams_pem, S2N_MAX_TEST_PEM_SIZE));
+    EXPECT_NOT_NULL(chain_and_key = s2n_cert_chain_and_key_new());
+    EXPECT_SUCCESS(s2n_cert_chain_and_key_load_pem(chain_and_key, cert_chain_pem, private_key_pem));
 
     EXPECT_SUCCESS(s2n_config_set_protocol_preferences(config, protocols, protocols_size));
-    EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key(config, cert_chain_pem, private_key_pem));
+    EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(config, chain_and_key));
     EXPECT_SUCCESS(s2n_config_add_dhparams(config, dhparams_pem));
 
     /** Test no client ALPN request */
@@ -173,6 +178,8 @@ int main(int argc, char **argv)
 
     /* Negotiate the handshake. */
     EXPECT_SUCCESS(s2n_negotiate(conn, &blocked));
+
+    EXPECT_EQUAL(s2n_connection_get_selected_cert(conn), chain_and_key);
 
     /* Expect NULL negotiated protocol */
     EXPECT_EQUAL(s2n_get_application_protocol(conn), NULL);
@@ -419,6 +426,7 @@ int main(int argc, char **argv)
     EXPECT_NOT_EQUAL(status, 0);
 
     EXPECT_SUCCESS(s2n_config_free(config));
+    EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
     free(cert_chain_pem);
     free(private_key_pem);
     free(dhparams_pem);

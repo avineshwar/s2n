@@ -137,6 +137,18 @@ the macro will set s2n_errno correctly, as well as some useful debug strings, an
 
 *Note*: In general, C preprocessor Macros with embedded control flow are a bad idea, but GUARD, S2N_ERROR and the safety checkers are so thoroughly used throughout s2n that it should be a clear and idiomatic pattern, almost forming a small domain specific language. 
 
+### Cleanup On Error
+As discussed below, s2n rarely allocates resources, and so has nothing to clean up on error.  For cases where functions do allocate resources which must be cleaned up, s2n offers two macros:
+
+```c
+#define GUARD_GOTO( x , label ) if ( (x) < 0 ) goto label
+#define DEFER_CLEANUP(_thealloc, _thecleanup)  __attribute__((cleanup(_thecleanup))) _thealloc
+```
+
+`GUARD_GOTO( x , label )` does traditional "goto" style cleanup: if the function `x` returns an error, control is transfered to label `label`.  It is the responsibility of the code at `label` to cleanup any resources, and then return `-1`.
+
+`DEFER_CLEANUP(_thealloc, _thecleanup)` is a more failsafe way of ensuring that resources are cleaned up, using the ` __attribute__((cleanup())` destructor mechanism available in modern C compilers.  When the variable declared in `_thealloc` goes out of scope, the cleanup function `_thecleanup` is automatically called.  This guarantees that resources will be cleaned up, no matter how the function exits.
+
 ### Control flow and the state machine
 
 Branches can be a source of cognitive load, as they ask the reader to follow a path of thinking, while also remembering that there is another path to be explored. When branches are nested they can often lead to impossible to grasp combinatorial explosions. s2n tries to systematically reduce the number of branches used in the code in several ways. 
@@ -173,7 +185,7 @@ Lastly, s2n studiously avoids locks. s2n is designed to be thread-safe, but does
 
 s2n is written in C99. The code formatting and indentation should be relatively clear from reading some s2n source files, but there is also an automated "make indent" target that will indent the s2n sources. 
 
-There should be no need for comments to explain *what* s2n code is doing; variables and functions should be given clear and human-readable names that make their purpose and intent intuitive. Comments explaining *why* we are doing something are encouraged. Often some context setting is necessary; a reference to an RFC, or a reminder of some critical state that is hard to work directly into the immediate code in a natural way. 
+There should be no need for comments to explain *what* s2n code is doing; variables and functions should be given clear and human-readable names that make their purpose and intent intuitive. Comments explaining *why* we are doing something are encouraged. Often some context setting is necessary; a reference to an RFC, or a reminder of some critical state that is hard to work directly into the immediate code in a natural way. All comments should be written using C syntax `/* */` and **avoid** C++ comments `//` even though C99 compilers allow `//`. 
 
 Every source code file must include a copy of the Apache Software License 2.0, as well as a correct copyright notification. The year of copyright should be the year in which the file was first created. 
 
@@ -208,11 +220,11 @@ UNIT_TESTS=s2n_hash_test make
 
 ## A tour of s2n memory handling: blobs and stuffers
 
-C has a history of issues around memory and buffer handling. To avoid problems in this area, s2n does not use C string functions or standard buffer manipulation patterns. Instead memory regions are tracked explicitly, with s2n_blob structures, and buffers are re-oriented as streams with s2n_stuffer structures.
+C has a history of issues around memory and buffer handling. To avoid problems in this area, s2n does not use C string functions or standard buffer manipulation patterns. Instead memory regions are tracked explicitly, with `s2n_blob` structures, and buffers are re-oriented as streams with `s2n_stuffer` structures.
 
 ### s2n_blob : keeping track of memory ranges
 
-s2n_blob is a very simple data structure:
+`s2n_blob` is a very simple data structure:
 
 ```c
 struct s2n_blob {
@@ -280,21 +292,29 @@ void *s2n_stuffer_raw_write(struct s2n_stuffer *stuffer, uint32_t data_len);
 void *s2n_stuffer_raw_read(struct s2n_stuffer *stuffer, uint32_t data_len);
 ```
 
-the first function returns a pointer to the existing location of the write cursor, and then increments the write cursor by data_len, so an external function is free to write to the pointer, as long as it only writes data_len bytes. The second function does the same thing, except that it increments the read cursor. Use of these functions is discouraged and should only be done when necessary for compatibility. 
+the first function returns a pointer to the existing location of the write cursor, and then increments the write cursor by `data_len`, so an external function is free to write to the pointer, as long as it only writes `data_len` bytes.
+The second function does the same thing, except that it increments the read cursor.
+Use of these functions is discouraged and should only be done when necessary for compatibility.
 
 One problem with returning raw pointers is that a pointer can become stale if the stuffer is later resized. Growable stuffers are resized using realloc(), which is free to copy and re-address memory. This could leave the original pointer location dangling, potentially leading to an invalid access. To prevent this, stuffers have a life-cycle and can be tainted, which prevents them from being resized within their present life-cycle. 
 
-Internally stuffers track 4 bits of state:
+Internally stuffers track 4 pieces of state:
 
 ```c
+uint32_t     high_water_mark;
 unsigned int alloced:1;
 unsigned int growable:1;
-unsigned int wiped:1;
 unsigned int tainted:1;
 ```
 
-the first two bits of state track whether a stuffer was dynamically allocated (and so should be free'd later) and whether or not it is growable. The "wiped" piece of state tracks whether a stuffer has been wiped clean and the data erased. If a stuffer has been fully read then it should be in a wiped state, but a stuffer is also explicitly wiped at the end of its lifecycle and this bit of state helps avoids needless zeroing of memory. tainted is set to 1 whenever the raw access functions are called. If a stuffer is currently tainted then it can not be resized and it becomes ungrowable. This is reset when a stuffer is explicitly wiped, which begins the life-cycle anew. So any pointers returned by the raw access functions are legal only until s2n_stuffer_wipe is called. 
-
+The `high_water_mark` tracks the furthermost byte which has been written but not yet wiped.
+Note that this may be past the `write_cursor` if `s2n_stuffer_rewrite()` has been called.
+Explicitly tracking the `high_water_mark` allows us to track the bytes which need to be wiped, and helps avoids needless zeroing of memory.
+The next two bits of state track whether a stuffer was dynamically allocated (and so should be free'd later) and whether or not it is growable.
+`tainted` is set to 1 whenever the raw access functions are called.
+If a stuffer is currently tainted then it can not be resized and it becomes ungrowable.
+This is reset when a stuffer is explicitly wiped, which begins the life-cycle anew.
+So any pointers returned by the raw access functions are legal only until `s2n_stuffer_wipe()` is called.
 The end result is that this kind of pattern is legal:
 
 ```c

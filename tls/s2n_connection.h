@@ -86,9 +86,17 @@ struct s2n_connection {
      * extension is not sent back by the server.
      */
     unsigned secure_renegotiation:1;
+    /* Was the EC point formats sent by the client */
+    unsigned ec_point_formats:1;
 
      /* whether the connection address is ipv6 or not */
     unsigned ipv6:1;
+
+    /* Whether server_name extension was used to make a decision on cert selection.
+     * RFC6066 Section 3 states that server which used server_name to make a decision
+     * on certificate or security settings has to send an empty server_name.
+     */
+    unsigned server_name_used:1;
 
     /* Is this connection a client or a server connection */
     s2n_mode mode;
@@ -119,6 +127,9 @@ struct s2n_connection {
     uint8_t client_protocol_version;
     uint8_t server_protocol_version;
     uint8_t actual_protocol_version;
+
+    /* Flag indicating whether a protocol version has been
+     * negotiated yet. */
     uint8_t actual_protocol_version_established;
 
     /* Our crypto parameters */
@@ -128,6 +139,9 @@ struct s2n_connection {
     /* Which set is the client/server actually using? */
     struct s2n_crypto_parameters *client;
     struct s2n_crypto_parameters *server;
+
+    /* Contains parameters needed during the handshake phase */
+    struct s2n_handshake_parameters handshake_params;
 
     /* The PRF needs some storage elements to work with */
     struct s2n_prf_working_space prf_space;
@@ -176,9 +190,6 @@ struct s2n_connection {
     uint8_t writer_alert_out_data[S2N_ALERT_LENGTH];
     struct s2n_stuffer reader_alert_out;
     struct s2n_stuffer writer_alert_out;
-
-    /* Contains parameters needed during the handshake phase */
-    struct s2n_handshake_parameters handshake_params;
 
     /* Our handshake state machine */
     struct s2n_handshake handshake;
@@ -230,7 +241,7 @@ struct s2n_connection {
     sig_atomic_t closed;
 
     /* TLS extension data */
-    char server_name[256];
+    char server_name[S2N_MAX_SERVER_NAME + 1];
 
     /* The application protocol decided upon during the client hello.
      * If ALPN is being used, then:
@@ -273,6 +284,7 @@ struct s2n_connection {
 };
 
 int s2n_connection_is_managed_corked(const struct s2n_connection *s2n_connection);
+int s2n_connection_is_client_auth_enabled(struct s2n_connection *s2n_connection);
 
 /* Kill a bad connection */
 int s2n_connection_kill(struct s2n_connection *conn);

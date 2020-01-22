@@ -12,10 +12,11 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 #
+
 set -e
 
-pip install --user --upgrade pip setuptools
-pip install --user --upgrade nassl sslyze==1.4.0
+pip3 install --user --upgrade pip setuptools
+pip3 install --user sslyze
 
 which sslyze
 sslyze --version

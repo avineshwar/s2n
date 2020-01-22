@@ -20,14 +20,8 @@ set -x
 sudo apt-get install -y figlet
 
 #Install boogieman
-#sudo gem install --pre bam-bam-boogieman
-git clone https://github.com/Qthan/bam-bam-boogieman.git -b cost-modeling
-cd bam-bam-boogieman
-bundle update
-bundle exec rake install
-cd ..
+gem install bam-bam-boogieman
 which bam
-
 
 #Install the apt-get dependencies from the smack build script: this way they will still be there
 #when we get things from cache
@@ -39,7 +33,7 @@ DEPENDENCIES+=" clang-3.9 llvm-3.9 llvm-3.9-dev"
 sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
 echo "deb http://download.mono-project.com/repo/ubuntu trusty main" | sudo tee /etc/apt/sources.list.d/mono-official.list
 
-sudo apt-get update
+sudo apt-get update -o Acquire::CompressionTypes::Order::=gz
 sudo apt-get install -y ${DEPENDENCIES}
 pip install pyyaml
 
